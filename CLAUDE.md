@@ -24,3 +24,23 @@ the phone with nothing to say why. `EVAL="water.setTime('sunset')"` runs code be
 - Anything opaque that can be underwater must go through `waterPatch()` or it will look dry under water.
 - Sky, fog and water all read the same uniforms (`U`), so the horizon cannot seam.
 - `waveAt()` in JS must stay the same sum as `waveAt()` in GLSL.
+
+## The character (`models/glorp_character.glb`, from the Peggy repo)
+
+Measured offline before use, posing the real rig through the vendored loader -- not assumed:
+- Faces **+Z** (toes read 0.999 along +Z), so `root.rotation.y = face` with forward `(sin h, cos h)`.
+- **Measure the POSED skin, never the raw geometry.** Bind space does not match the posed body on this
+  export (Peggy shipped him 2.8 m tall and floating that way). `SkinnedMesh.computeBoundingBox()` after
+  `mixer.update(0)` is the honest measure. He is drawn at `MOVE.height` 1.5 m, centred on his Hips.
+- Ships with **no material**. The texture is `images/glorp_texture.webp`, which stores **LINEAR** pixel
+  values (set `LinearSRGBColorSpace`). Peggy's posterised cel version reads blotchy under real light.
+- Clips used: `idle`, `walk`, `run`, `running_jump`, `in_air`, `landing`. Every clip also has a `.001`
+  duplicate and there is `CINEMA_4D_Main` / `tpose` residue -- ignored. Also present, unused:
+  `run_backward`, `left_strafe`, `right_strafe`.
+- Reference speeds (planted toe, in heights/second): walk 0.779, run 1.534 -> 1.17 / 2.30 m/s at 1.5 m.
+- His material goes through `waterPatch()`, which is why his legs read as underwater when he wades.
+
+## Controls
+
+Left half: floating stick (walk, or steer the boat camera-relative). Right half: drag to orbit, pinch to
+zoom, tap water for ripples. Jump button; a contextual Board / Go ashore button. Laptop: WASD, Space, E.

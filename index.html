@@ -46,12 +46,20 @@
 	#hud b { font-size: 28px; color: #6ff0ff; display: block; letter-spacing: .02em; }
 	#hud b.pulse { animation: pulse .5s ease-in-out 3; }
 	@keyframes pulse { 50% { color: #fff; transform: scale(1.12); } }
-	#title { position: fixed; left: calc(18px + env(safe-area-inset-left)); bottom: calc(64px + env(safe-area-inset-bottom)); z-index: 5;
-		font: 400 40px/1 Georgia, 'Times New Roman', serif; color: #fff; text-shadow: 0 2px 12px rgba(0,40,70,.35); pointer-events: none; }
-	#title small { display: block; font: 500 12px/1.6 -apple-system, system-ui, sans-serif; opacity: .85; margin-top: 6px; }
-	#bar { position: fixed; left: 0; right: 0; bottom: calc(16px + env(safe-area-inset-bottom)); z-index: 5; display: flex; justify-content: center; gap: 6px; flex-wrap: wrap; padding: 0 12px; }
+	#hint { position: fixed; left: 0; right: 0; top: calc(64px + env(safe-area-inset-top)); z-index: 5; text-align: center;
+		font: 400 30px/1 Georgia, 'Times New Roman', serif; color: #fff; text-shadow: 0 2px 12px rgba(0,40,70,.4); pointer-events: none; transition: opacity 1.2s; }
+	#hint small { display: block; font: 500 12px/1.6 -apple-system, system-ui, sans-serif; opacity: .9; margin-top: 6px; padding: 0 20px; }
+	#hint.gone { opacity: 0; }
+	#stick { display: none; position: fixed; z-index: 6; width: 108px; height: 108px; margin: -54px 0 0 -54px; border-radius: 50%;
+		border: 3px solid rgba(255,255,255,.8); box-shadow: 0 0 0 2px rgba(0,40,60,.35); pointer-events: none; }
+	#knob { position: absolute; left: 50%; top: 50%; width: 46px; height: 46px; margin: -23px 0 0 -23px; border-radius: 50%; background: #fff; box-shadow: 0 1px 4px rgba(0,0,0,.35); }
+	#jumpB, #actB { position: fixed; z-index: 6; right: calc(22px + env(safe-area-inset-right)); border: 0; touch-action: manipulation;
+		font: 700 14px -apple-system, system-ui, sans-serif; color: #0d2b3a; background: rgba(255,255,255,.85); box-shadow: 0 2px 8px rgba(0,30,50,.3); }
+	#jumpB { bottom: calc(28px + env(safe-area-inset-bottom)); width: 76px; height: 76px; border-radius: 50%; }
+	#actB { display: none; bottom: calc(118px + env(safe-area-inset-bottom)); padding: 12px 18px; border-radius: 999px; background: #ffcf4a; }
+	#bar { position: fixed; right: calc(10px + env(safe-area-inset-right)); top: calc(10px + env(safe-area-inset-top)); z-index: 5; display: flex; justify-content: flex-end; gap: 4px; flex-wrap: wrap; max-width: 250px; }
 	#bar button { font: 600 12px -apple-system, system-ui, sans-serif; color: #0d2b3a; background: rgba(255,255,255,.72); border: 0;
-		border-radius: 999px; padding: 8px 13px; touch-action: manipulation; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
+		border-radius: 999px; padding: 6px 10px; touch-action: manipulation; backdrop-filter: blur(6px); -webkit-backdrop-filter: blur(6px); }
 	#bar button.on { background: #0d2b3a; color: #fff; }
 	#bar .sep { width: 10px; }
 	#pill { display: none; position: fixed; top: calc(12px + env(safe-area-inset-top)); left: 50%; transform: translateX(-50%); z-index: 20;
@@ -60,19 +68,22 @@
 <script type="importmap">{ "imports": { "three": "./vendor/three.module.min.js" } }</script>
 </head>
 <body>
-<div id="hud"><b id="bn">w1</b><span id="fps">--</span></div>
-<div id="title">Cala Blanca<small>tap the water to make ripples · drag to orbit · pinch to zoom</small></div>
+<div id="hud"><b id="bn">w2</b><span id="fps">--</span></div>
+<div id="hint">Cala Blanca<small>left thumb: walk · right thumb: look · tap water for ripples · walk to the boat to board</small></div>
+<div id="stick"><div id="knob"></div></div>
+<button id="actB">Board</button><button id="jumpB">Jump</button>
 <div id="bar">
 	<button data-time="day" class="on">Day</button><button data-time="golden">Golden</button><button data-time="sunset">Sunset</button>
-	<span class="sep"></span>
+	<span class="sep" style="flex-basis:100%;height:0"></span>
 	<button data-sea="calm">Calm</button><button data-sea="breezy" class="on">Breezy</button><button data-sea="choppy">Choppy</button>
 </div>
 <button id="pill"></button>
 <script type="module">
 import * as THREE from 'three';
 import { mergeGeometries, mergeVertices } from './vendor/BufferGeometryUtils.js';
+import { GLTFLoader } from './vendor/GLTFLoader.js';
 
-const BUILD = 1;
+const BUILD = 2;
 const bnEl = document.getElementById('bn');
 bnEl.textContent = 'w' + BUILD; bnEl.classList.add('pulse');
 
@@ -407,6 +418,7 @@ const C = (hex) => new THREE.Color(hex);   // sRGB hex -> linear, via ColorManag
 // ---------------------------------------------------------------------------------------------
 // Props: house, deck, palm, rocks, bushes. Procedural and merged -- one draw call per material.
 // ---------------------------------------------------------------------------------------------
+const SOLIDS = [];   // circles the player cannot walk through: { x, z, r, top }
 const MATS = {};
 const mat = (k, opt) => MATS[k] || (MATS[k] = waterPatch(new THREE.MeshStandardMaterial(Object.assign({ roughness: 0.9, metalness: 0 }, opt))));
 const parts = {};
@@ -448,6 +460,7 @@ const HX = 1.2, HZ = -1.6, HY = height(HX, HZ) - 0.05, HROT = -0.25;
 // palm: a curved, ringed trunk and drooping fronds built from leaflets
 {
 	const base = new THREE.Vector3(-4.6, height(-4.6, -3.2) - 0.1, -3.2);
+	SOLIDS.push({ x: base.x - 0.05, z: base.z + 0.02, r: 0.28, top: 99 });
 	const pts = [];
 	for (let i = 0; i <= 6; i++) { const t = i / 6; pts.push(new THREE.Vector3(base.x - 2.2 * t * t, base.y + 7.2 * t, base.z + 0.8 * t * t)); }
 	const curve = new THREE.CatmullRomCurve3(pts);
@@ -505,7 +518,7 @@ function rockGeo(seed, s) {
 	}
 	for (let i = 0; i < 9; i++) { const a = r() * Math.PI * 2, R = islandR(a) * (1.4 + r() * 1.1); rocks.push([Math.cos(a) * R, Math.sin(a) * R, 0.6 + r() * 1.3]); }
 	for (let i = 0; i < 10; i++) { const a = r() * Math.PI * 2, R = islandR(a) * (0.35 + r() * 0.35); rocks.push([Math.cos(a) * R, Math.sin(a) * R, 0.12 + r() * 0.18]); }
-	rocks.forEach(([x, z, s], i) => { const g = rockGeo(100 + i, s); g.rotateY(r() * 6.28); g.translate(x, height(x, z) + s * 0.1, z); add('rock', g); });
+	rocks.forEach(([x, z, s], i) => { const g = rockGeo(100 + i, s); g.rotateY(r() * 6.28); const y = height(x, z) + s * 0.1; g.translate(x, y, z); add('rock', g); if (s > 0.35) SOLIDS.push({ x, z, r: s * 0.95, top: y + s * 0.55 }); });
 }
 
 // bushes: clumps of lumpy spheres round the house
@@ -693,13 +706,12 @@ const boat = new THREE.Group();
 	hull.computeVertexNormals();
 	const hm = new THREE.Mesh(hull, floatMat('#f3efe6', 0.6));
 	const deck = new THREE.Mesh(new THREE.ShapeGeometry(sh, 10).rotateX(-Math.PI / 2).rotateY(Math.PI).scale(0.86, 1, 0.86).translate(0, 0.47, 0.05), floatMat('#c79e6d'));
-	const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 4.2, 6).translate(0, 2.4, 0.4), floatMat('#8a7358'));
-	const sailG = new THREE.BufferGeometry(); sailG.setAttribute('position', new THREE.Float32BufferAttribute([0, 0.8, 0.5, 0, 4.3, 0.45, 0, 0.8, -1.7], 3)); sailG.computeVertexNormals();
+	const mast = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.07, 4.2, 6).translate(0, 2.4, 0.95), floatMat('#8a7358'));
+	const sailG = new THREE.BufferGeometry(); sailG.setAttribute('position', new THREE.Float32BufferAttribute([0, 1.0, 1.05, 0, 4.3, 1.0, 0, 1.75, -0.35], 3)); sailG.computeVertexNormals();
 	const sail = new THREE.Mesh(sailG, waterPatch(new THREE.MeshStandardMaterial({ color: '#fbf7ee', roughness: 0.9, side: THREE.DoubleSide })));
 	for (const m of [hm, deck, mast, sail]) { m.castShadow = true; m.receiveShadow = true; boat.add(m); }
 	scene.add(boat);
 }
-const BOAT = { r: 33, speed: 3.4, wakeEvery: 0.22, t: 0, wakeT: 0, ang: 0.8 };
 const buoys = [];
 {
 	const cols = ['#d9472b', '#f2c230', '#d9472b', '#f4f1ea', '#d9472b'];
@@ -736,96 +748,385 @@ for (const b of document.querySelectorAll('#bar button')) b.addEventListener('cl
 });
 
 // ---------------------------------------------------------------------------------------------
-// Camera: orbit with one finger, pinch to zoom, auto-drift when left alone. Tap the water = ripple.
+// Input: a floating stick on the left half, camera drag/pinch on the right, two buttons.
+// Keys for a laptop: WASD / arrows, Space jump, E board/leave, mouse drag orbits.
 // ---------------------------------------------------------------------------------------------
-const CAM = { az: 1.05, pol: 0.95, dist: 46, target: new THREE.Vector3(0, 0.8, 0), idle: 0, drift: 0.035 };
-const ptrs = new Map(); let pinch0 = 0, down = null;
+const IN = { x: 0, y: 0, jump: false, act: false, keys: new Set() };
+const CAM = { az: 1.45, pol: 1.14, dist: 9, zoom: 1, target: new THREE.Vector3(), lag: new THREE.Vector3(), first: true };
+const stickEl = document.getElementById('stick'), knobEl = document.getElementById('knob');
+const STICK_R = 54;
+let stickId = null, stickO = { x: 0, y: 0 };
+const camPtrs = new Map(); let pinch0 = 0, down = null;
 const cv = renderer.domElement;
+const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit = new THREE.Vector3();
+
+function stickSet(px, py) {
+	let dx = px - stickO.x, dy = py - stickO.y; const d = Math.hypot(dx, dy);
+	if (d > STICK_R) { dx *= STICK_R / d; dy *= STICK_R / d; }
+	IN.x = dx / STICK_R; IN.y = -dy / STICK_R;
+	knobEl.style.transform = `translate(${dx}px, ${dy}px)`;
+}
+function stickEnd() { stickId = null; IN.x = IN.y = 0; stickEl.style.display = 'none'; knobEl.style.transform = ''; }
 cv.addEventListener('pointerdown', (e) => {
-	cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
-	if (ptrs.size === 1) down = { x: e.clientX, y: e.clientY, t: performance.now() }; else down = null;
-	if (ptrs.size === 2) { const [a, b] = [...ptrs.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); }
-	CAM.idle = 0;
+	try { cv.setPointerCapture(e.pointerId); } catch { }
+	if (e.pointerType !== 'mouse' && stickId === null && e.clientX < innerWidth * 0.45) {
+		stickId = e.pointerId; stickO = { x: e.clientX, y: e.clientY };
+		stickEl.style.left = e.clientX + 'px'; stickEl.style.top = e.clientY + 'px'; stickEl.style.display = 'block';
+		stickSet(e.clientX, e.clientY); return;
+	}
+	camPtrs.set(e.pointerId, { x: e.clientX, y: e.clientY });
+	down = camPtrs.size === 1 ? { x: e.clientX, y: e.clientY, t: performance.now() } : null;
+	if (camPtrs.size === 2) { const [a, b] = [...camPtrs.values()]; pinch0 = Math.hypot(a.x - b.x, a.y - b.y); }
 });
 cv.addEventListener('pointermove', (e) => {
-	const p = ptrs.get(e.pointerId); if (!p) return;
+	if (e.pointerId === stickId) { stickSet(e.clientX, e.clientY); return; }
+	const p = camPtrs.get(e.pointerId); if (!p) return;
 	const dx = e.clientX - p.x, dy = e.clientY - p.y; p.x = e.clientX; p.y = e.clientY;
-	if (ptrs.size === 1) { CAM.az += dx * 0.006; CAM.pol = THREE.MathUtils.clamp(CAM.pol - dy * 0.005, 0.18, 1.45); }
-	else if (ptrs.size === 2) {
-		const [a, b] = [...ptrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
-		if (pinch0) CAM.dist = THREE.MathUtils.clamp(CAM.dist * pinch0 / d, 9, 160); pinch0 = d;
+	if (camPtrs.size === 1) { CAM.az += dx * 0.007; CAM.pol = THREE.MathUtils.clamp(CAM.pol - dy * 0.005, 0.25, 1.5); }
+	else if (camPtrs.size === 2) {
+		const [a, b] = [...camPtrs.values()], d = Math.hypot(a.x - b.x, a.y - b.y);
+		if (pinch0) CAM.zoom = THREE.MathUtils.clamp(CAM.zoom * pinch0 / d, 0.45, 6); pinch0 = d;
 	}
-	CAM.idle = 0;
 });
-const ray = new THREE.Raycaster(), ndc = new THREE.Vector2(), plane = new THREE.Plane(new THREE.Vector3(0, 1, 0), 0), hit = new THREE.Vector3();
 function endPtr(e) {
-	if (down && ptrs.size === 1 && performance.now() - down.t < 300 && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 10) {
+	if (e.pointerId === stickId) { stickEnd(); return; }
+	if (down && camPtrs.size === 1 && performance.now() - down.t < 280 && Math.hypot(e.clientX - down.x, e.clientY - down.y) < 10) {
 		ndc.set(e.clientX / innerWidth * 2 - 1, -(e.clientY / innerHeight) * 2 + 1);
 		ray.setFromCamera(ndc, camera);
 		if (ray.ray.intersectPlane(plane, hit) && height(hit.x, hit.z) < 0.05) { addRipple(hit.x, hit.z, 1.4); addRipple(hit.x, hit.z, 0.8); }
 	}
-	ptrs.delete(e.pointerId); down = null; pinch0 = 0;
+	camPtrs.delete(e.pointerId); down = null; pinch0 = 0;
 }
 cv.addEventListener('pointerup', endPtr); cv.addEventListener('pointercancel', endPtr);
-addEventListener('blur', () => { ptrs.clear(); down = null; });
-cv.addEventListener('wheel', (e) => { CAM.dist = THREE.MathUtils.clamp(CAM.dist * Math.exp(e.deltaY * 0.001), 9, 160); CAM.idle = 0; }, { passive: true });
+// an up that never arrives is a stuck stick: the app going away mid-touch delivers nothing
+for (const ev of ['blur', 'pagehide']) addEventListener(ev, () => { stickEnd(); camPtrs.clear(); down = null; IN.keys.clear(); });
+document.addEventListener('visibilitychange', () => { if (document.hidden) { stickEnd(); camPtrs.clear(); IN.keys.clear(); } });
+cv.addEventListener('wheel', (e) => { CAM.zoom = THREE.MathUtils.clamp(CAM.zoom * Math.exp(e.deltaY * 0.001), 0.45, 6); }, { passive: true });
+addEventListener('keydown', (e) => {
+	IN.keys.add(e.code);
+	if (e.code === 'Space') IN.jump = true;
+	if (e.code === 'KeyE') IN.act = true;
+});
+addEventListener('keyup', (e) => IN.keys.delete(e.code));
+const press = (el, fn) => el.addEventListener('pointerdown', (e) => { e.preventDefault(); e.stopPropagation(); fn(); });
+const jumpB = document.getElementById('jumpB'), actB = document.getElementById('actB');
+press(jumpB, () => { IN.jump = true; });
+press(actB, () => { IN.act = true; });
 
+function readMove() {
+	let x = IN.x, y = IN.y;
+	const k = IN.keys;
+	if (k.has('KeyW') || k.has('ArrowUp')) y += 1;
+	if (k.has('KeyS') || k.has('ArrowDown')) y -= 1;
+	if (k.has('KeyD') || k.has('ArrowRight')) x += 1;
+	if (k.has('KeyA') || k.has('ArrowLeft')) x -= 1;
+	const m = Math.hypot(x, y); if (m > 1) { x /= m; y /= m; }
+	// camera-relative: the camera sits at target + (cos az, sin az), so it LOOKS along -(cos az, sin az).
+	// Forward is (sin h, cos h) and right is (-fz, fx).
+	const fx = -Math.cos(CAM.az), fz = -Math.sin(CAM.az), rx = -fz, rz = fx;
+	return { x: fx * y + rx * x, z: fz * y + rz * x, mag: Math.min(1, Math.hypot(x, y)) };
+}
+const wrapA = (a) => Math.atan2(Math.sin(a), Math.cos(a));
+
+// ---------------------------------------------------------------------------------------------
+// Where you can stand: the terrain, the deck, and the solids (house, rocks, palm trunk).
+// ---------------------------------------------------------------------------------------------
+const cosH = Math.cos(HROT), sinH = Math.sin(HROT);
+function toHouse(x, z) { const dx = x - HX, dz = z - HZ; return [dx * cosH - dz * sinH, dx * sinH + dz * cosH]; }   // inverse of rotateY(HROT)
+function groundAt(x, z) {
+	let g = height(x, z);
+	const [lx, lz] = toHouse(x, z);
+	if (Math.abs(lx) < 2.42 && lz > 1.6 && lz < 3.88) g = Math.max(g, HY + 0.49);                 // deck
+	else if (Math.abs(lx) < 0.58 && lz >= 3.88 && lz < 4.95) g = Math.max(g, HY + 0.35 - (lz - 3.88) * 0.3);   // steps
+	return g;
+}
+function pushOut(p, r) {
+	// house walls: an oriented box, pushed out along the face it is least deep into
+	const [lx, lz] = toHouse(p.x, p.z), hx = 2.12 + r, hz = 1.62 + r;
+	if (Math.abs(lx) < hx && Math.abs(lz) < hz) {
+		let nx = lx, nz = lz;
+		if (hx - Math.abs(lx) < hz - Math.abs(lz)) nx = Math.sign(lx) * hx; else nz = Math.sign(lz) * hz;
+		p.x = HX + nx * cosH + nz * sinH; p.z = HZ - nx * sinH + nz * cosH;
+	}
+	for (const c of SOLIDS) {
+		if (p.y > c.top) continue;
+		const dx = p.x - c.x, dz = p.z - c.z, d = Math.hypot(dx, dz), m = c.r + r;
+		if (d < m && d > 1e-4) { p.x = c.x + dx / d * m; p.z = c.z + dz / d * m; }
+	}
+}
+
+// ---------------------------------------------------------------------------------------------
+// The boat: parked off the front beach until somebody takes the helm
+// ---------------------------------------------------------------------------------------------
+const DOCK_A = 1.28;
+const BOAT = { pos: new THREE.Vector3(), h: 0, v: 0, max: 7.5, wakeT: 0, bowT: 0, helm: new THREE.Vector3(0, 0.5, -1.15) };
+{
+	let r = islandR(DOCK_A);
+	while (height(Math.cos(DOCK_A) * r, Math.sin(DOCK_A) * r) > -1.15 && r < 60) r += 0.25;
+	r += 2.6;
+	BOAT.pos.set(Math.cos(DOCK_A) * r, 0, Math.sin(DOCK_A) * r);
+	BOAT.h = Math.atan2(-Math.cos(DOCK_A), -Math.sin(DOCK_A)) + 0.9;   // moored side-on to the beach
+}
+function boatClear(x, z) { return height(x, z) < -0.6; }
+function exitPoint() {
+	let best = null, bd = 1e9;
+	for (const r of [2.4, 3.2, 4.0, 5.0, 6.0]) for (let k = 0; k < 20; k++) {
+		const a = k / 20 * Math.PI * 2, x = BOAT.pos.x + Math.cos(a) * r, z = BOAT.pos.z + Math.sin(a) * r;
+		if (-height(x, z) > MOVE.wade) continue;
+		const p = new THREE.Vector3(x, groundAt(x, z), z), q = p.clone(); pushOut(q, MOVE.r);
+		if (q.distanceTo(p) > 0.01) continue;
+		const score = Math.max(0, -height(x, z)) * 4 + r;   // shallowest first, then nearest
+		if (score < bd) { bd = score; best = p; }
+	}
+	return best;
+}
+
+// ---------------------------------------------------------------------------------------------
+// The player
+// ---------------------------------------------------------------------------------------------
+const MOVE = { walk: 1.7, run: 4.3, acc: 9, turn: 11, jump: 7.2, g: 22, step: 0.6, r: 0.33, wade: 1.05, wadeSlow: 0.5, height: 1.5 };
+const P = {
+	pos: new THREE.Vector3(Math.cos(DOCK_A) * 6.4, 0, Math.sin(DOCK_A) * 6.4), vel: new THREE.Vector3(), vy: 0, face: Math.PI, speed: 0,
+	ground: true, mode: 'walk', jumpT: 0, landT: 0, airT: 0, wakeT: 0, fallV: 0,
+};
+P.pos.y = groundAt(P.pos.x, P.pos.z);
+
+function stepWalk(dt) {
+	const m = readMove();
+	const depth = Math.max(0, -height(P.pos.x, P.pos.z));
+	const wadeK = 1 - MOVE.wadeSlow * smooth(0.1, 0.95, depth);
+	const want = (m.mag < 0.5 ? m.mag / 0.5 * MOVE.walk : mix(MOVE.walk, MOVE.run, (m.mag - 0.5) / 0.5)) * wadeK;
+	if (m.mag > 0.05) {
+		const th = Math.atan2(m.x, m.z);
+		P.face += wrapA(th - P.face) * (1 - Math.exp(-MOVE.turn * dt));
+	}
+	// velocity follows the thumb at a walk and the body at a run, which is what stops a moonwalk
+	const fx = Math.sin(P.face), fz = Math.cos(P.face);
+	const dir = m.mag > 0.05 ? new THREE.Vector2(m.x, m.z).normalize() : new THREE.Vector2(fx, fz);
+	const k = smooth(MOVE.walk, MOVE.run, P.speed);
+	const tx = mix(dir.x, fx, k) * want, tz = mix(dir.y, fz, k) * want;
+	const a = 1 - Math.exp(-(P.ground ? MOVE.acc : MOVE.acc * 0.25) * dt);
+	P.vel.x += (tx - P.vel.x) * a; P.vel.z += (tz - P.vel.z) * a;
+	P.speed = Math.hypot(P.vel.x, P.vel.z);
+
+	if (IN.jump && P.ground) { P.vy = MOVE.jump; P.ground = false; P.jumpT = 0.42; playOnce('jump', 1.1); }
+	P.vy -= MOVE.g * dt; P.jumpT = Math.max(0, P.jumpT - dt); P.landT = Math.max(0, P.landT - dt);
+
+	// move one axis at a time so a blocked step slides along whatever stopped it
+	const old = P.pos.clone();
+	for (const ax of ['x', 'z']) {
+		const prev = P.pos[ax];
+		P.pos[ax] += P.vel[ax] * dt;
+		const g = groundAt(P.pos.x, P.pos.z), d = -height(P.pos.x, P.pos.z);
+		if (d > MOVE.wade || g - P.pos.y > MOVE.step) { P.pos[ax] = prev; P.vel[ax] = 0; }
+	}
+	pushOut(P.pos, MOVE.r);
+	P.pos.y += P.vy * dt;
+	const g = groundAt(P.pos.x, P.pos.z);
+	if (P.pos.y <= g + (P.ground ? 0.25 : 0)) {
+		if (!P.ground) {
+			if (P.vy < -7) { P.landT = 0.42; playOnce('land', 1.9, 0.3); }
+			if (-height(P.pos.x, P.pos.z) > 0.05) { addRipple(P.pos.x, P.pos.z, 0.9); addRipple(P.pos.x, P.pos.z, 0.5); }
+		}
+		P.pos.y = g; P.vy = 0; P.ground = true;
+	} else if (P.ground && P.vy <= 0) { P.ground = false; }
+	if (old.distanceTo(P.pos) < 1e-5) P.speed = 0;
+
+	// wading leaves rings behind him
+	if (depth > 0.05 && P.speed > 0.4 && P.ground) {
+		P.wakeT -= dt;
+		if (P.wakeT <= 0) { P.wakeT = 0.42 - Math.min(0.25, P.speed * 0.05); addRipple(P.pos.x, P.pos.z, 0.25 + Math.min(0.5, P.speed * 0.12)); }
+	}
+	if (IN.act && P.pos.distanceTo(BOAT.pos) < 3.4) board();
+}
+
+function board() {
+	P.mode = 'boat'; P.vel.set(0, 0, 0); P.speed = 0; P.vy = 0; P.ground = true;
+	CAM.az = -BOAT.h - Math.PI / 2;   // swing in behind the boat
+}
+function leave() {
+	const e = exitPoint(); if (!e) return;
+	P.mode = 'walk'; P.pos.copy(e); P.vy = 0; P.ground = true;
+	P.face = Math.atan2(e.x - BOAT.pos.x, e.z - BOAT.pos.z);
+	addRipple(e.x, e.z, 0.6);
+}
+
+function stepBoat(dt) {
+	const m = readMove();
+	let target = 0;
+	if (m.mag > 0.08) {
+		const dh = wrapA(Math.atan2(m.x, m.z) - BOAT.h);
+		const rate = 0.35 + 1.15 * Math.min(1, Math.abs(BOAT.v) / 3);
+		BOAT.h += THREE.MathUtils.clamp(dh, -rate * dt, rate * dt);
+		target = m.mag * BOAT.max * (0.3 + 0.7 * Math.max(0, Math.cos(dh)));
+	}
+	BOAT.v += (target - BOAT.v) * (1 - Math.exp(-dt * (target > BOAT.v ? 0.7 : 0.45)));
+	const fx = Math.sin(BOAT.h), fz = Math.cos(BOAT.h);
+	const nx = BOAT.pos.x + fx * BOAT.v * dt, nz = BOAT.pos.z + fz * BOAT.v * dt;
+	const bowOk = boatClear(nx + fx * 2.3, nz + fz * 2.3), sternOk = boatClear(nx - fx * 1.9, nz - fz * 1.9);
+	if (bowOk && sternOk) { BOAT.pos.x = nx; BOAT.pos.z = nz; }
+	else { if (Math.abs(BOAT.v) > 1) addRipple(BOAT.pos.x + fx * 2.3, BOAT.pos.z + fz * 2.3, 0.8); BOAT.v *= -0.25; }
+	if (IN.act) leave();
+}
+
+function stepBoatWake(dt) {
+	const v = Math.abs(BOAT.v), fx = Math.sin(BOAT.h), fz = Math.cos(BOAT.h);
+	if (v > 0.35) {
+		BOAT.wakeT -= dt;
+		if (BOAT.wakeT <= 0) { BOAT.wakeT = THREE.MathUtils.clamp(0.42 - v * 0.04, 0.13, 0.42); addRipple(BOAT.pos.x - fx * 1.7, BOAT.pos.z - fz * 1.7, Math.min(1.15, 0.25 + v * 0.13)); }
+	}
+	if (v > 2) { BOAT.bowT -= dt; if (BOAT.bowT <= 0) { BOAT.bowT = 0.35; addRipple(BOAT.pos.x + fx * 2.0, BOAT.pos.z + fz * 2.0, Math.min(0.7, v * 0.08)); } }
+}
+
+// ---------------------------------------------------------------------------------------------
+// The character: models/glorp_character.glb from the Peggy repo. Measured offline before use:
+// faces +Z, 1.24 units tall POSED (the bind-space bounds are not the posed body -- Peggy measured
+// raw geometry once and shipped him 2.8 m tall and floating), ships with no material, and carries
+// `.001` duplicates of every clip plus C4D residue, all ignored.
+// ---------------------------------------------------------------------------------------------
+const HERO = { root: new THREE.Group(), mixer: null, act: {}, w: {}, ready: false, look: 'lit', mats: [] };
+const HCLIPS = { idle: 'idle', walk: 'walk', run: 'run', jump: 'running_jump', air: 'in_air', land: 'landing' };
+const HREF = { walk: 0.779, run: 1.534 };   // planted-toe reference speed, in heights per second (measured)
+scene.add(HERO.root);
+function playOnce(k, rate = 1, from = 0) {
+	const a = HERO.act[k]; if (!a) return;
+	a.reset(); a.setLoop(THREE.LoopOnce, 1); a.clampWhenFinished = true; a.timeScale = rate; a.time = from; a.play();
+}
+(async () => {
+	try {
+		const [gltf, map] = await Promise.all([
+			new GLTFLoader().loadAsync('models/glorp_character.glb'),
+			new THREE.TextureLoader().loadAsync('images/glorp_texture.webp'),
+		]);
+		map.flipY = false; map.colorSpace = THREE.LinearSRGBColorSpace;   // this export stores LINEAR pixel values (Peggy's finding)
+		const inner = gltf.scene;
+		let skin = null;
+		inner.traverse((o) => {
+			if (!o.isMesh) return;
+			if (o.isSkinnedMesh) skin = o;
+			o.castShadow = true; o.receiveShadow = true; o.frustumCulled = false;
+			const lit = waterPatch(new THREE.MeshStandardMaterial({ map, roughness: 0.85, metalness: 0, emissive: 0xffffff, emissiveMap: map, emissiveIntensity: 0.22 }));
+			const flat = new THREE.MeshBasicMaterial({ map });
+			HERO.mats.push([o, lit, flat]);
+			o.material = lit;
+		});
+		HERO.mixer = new THREE.AnimationMixer(inner);
+		for (const [k, n] of Object.entries(HCLIPS)) {
+			const clip = THREE.AnimationClip.findByName(gltf.animations, n);
+			if (!clip) { console.warn('no clip', n); continue; }
+			const a = HERO.mixer.clipAction(clip); a.play(); a.setEffectiveWeight(k === 'idle' ? 1 : 0);
+			HERO.act[k] = a; HERO.w[k] = k === 'idle' ? 1 : 0;
+		}
+		// size and centre him off the POSED skin, idle frame 0
+		HERO.root.add(inner); HERO.root.position.set(0, 0, 0); HERO.root.rotation.set(0, 0, 0);
+		HERO.mixer.update(0); HERO.root.updateMatrixWorld(true);
+		const box = () => { skin.computeBoundingBox(); return skin.boundingBox.clone().applyMatrix4(skin.matrixWorld); };
+		inner.scale.multiplyScalar(MOVE.height / (box().max.y - box().min.y));
+		HERO.root.updateMatrixWorld(true);
+		const hips = inner.getObjectByName('mixamorig_Hips').getWorldPosition(new THREE.Vector3());
+		inner.position.x -= hips.x; inner.position.z -= hips.z; inner.position.y -= box().min.y;
+		HERO.ready = true;
+	} catch (e) { console.error(e); window.__crash && window.__crash('NO HERO: ' + (e.message || e)); }
+})();
+function heroLook(k) { HERO.look = k; for (const [o, lit, flat] of HERO.mats) o.material = k === 'flat' ? flat : lit; }
+
+function stepHero(dt) {
+	HERO.root.visible = HERO.ready;
+	if (!HERO.ready) return;
+	if (P.mode === 'boat') {
+		const p = BOAT.helm.clone().applyMatrix4(boat.matrixWorld);
+		HERO.root.position.copy(p); HERO.root.rotation.y = BOAT.h;
+	} else { HERO.root.position.copy(P.pos); HERO.root.rotation.y = P.face; }
+	const s = P.mode === 'boat' ? 0 : P.speed, H = MOVE.height;
+	const t = { idle: 0, walk: 0, run: 0, jump: 0, air: 0, land: 0 };
+	if (P.mode === 'walk' && !P.ground) { if (P.jumpT > 0) t.jump = 1; else t.air = 1; }
+	else if (P.landT > 0 && s < 1.5) t.land = 1;
+	else {
+		const idle = 1 - smooth(0.12, 0.55, s), run = smooth(2.1, 3.4, s) * (1 - idle);
+		t.idle = idle; t.run = run; t.walk = 1 - idle - run;
+	}
+	const k = 1 - Math.exp(-dt * 12);
+	for (const n in HERO.act) { HERO.w[n] += ((t[n] || 0) - HERO.w[n]) * k; HERO.act[n].setEffectiveWeight(HERO.w[n]); }
+	if (HERO.act.walk) HERO.act.walk.timeScale = THREE.MathUtils.clamp(s / (HREF.walk * H), 0.5, 1.9);
+	if (HERO.act.run) HERO.act.run.timeScale = THREE.MathUtils.clamp(s / (HREF.run * H), 0.7, 1.7);
+	HERO.mixer.update(dt);
+}
+
+// ---------------------------------------------------------------------------------------------
+// Camera: orbits whatever you are driving. Snaps in when something is in the way rather than
+// climbing over it, and never goes under the water or the sand.
+// ---------------------------------------------------------------------------------------------
+const camFocus = new THREE.Vector3();
 function stepCam(dt) {
-	CAM.idle += dt;
-	if (CAM.idle > 4) CAM.az += CAM.drift * dt * Math.min(1, (CAM.idle - 4) / 3);
-	const s = Math.sin(CAM.pol);
-	camera.position.set(CAM.target.x + Math.cos(CAM.az) * s * CAM.dist, CAM.target.y + Math.cos(CAM.pol) * CAM.dist, CAM.target.z + Math.sin(CAM.az) * s * CAM.dist);
-	camera.position.y = Math.max(camera.position.y, 0.9);
-	camera.lookAt(CAM.target);
+	if (P.mode === 'boat') camFocus.set(BOAT.pos.x, 1.4, BOAT.pos.z);
+	else camFocus.set(P.pos.x, P.pos.y + 1.1, P.pos.z);
+	if (CAM.first) { CAM.lag.copy(camFocus); CAM.first = false; }
+	CAM.lag.lerp(camFocus, 1 - Math.exp(-dt * 7));
+	const base = P.mode === 'boat' ? 15 : 8.5, dist = base * CAM.zoom, s = Math.sin(CAM.pol);
+	camera.position.set(CAM.lag.x + Math.cos(CAM.az) * s * dist, CAM.lag.y + Math.cos(CAM.pol) * dist, CAM.lag.z + Math.sin(CAM.az) * s * dist);
+	const floor = Math.max(0.35, groundAt(camera.position.x, camera.position.z) + 0.45);
+	if (camera.position.y < floor) camera.position.y = floor;
+	camera.lookAt(CAM.lag);
 	sky.position.copy(camera.position);
+	// the shadow map follows what you are looking at
+	sun.target.position.copy(CAM.lag).setY(0);
+	sun.position.copy(U.uSunDir.value).multiplyScalar(60).add(sun.target.position);
 }
 
 // ---------------------------------------------------------------------------------------------
 // Loop, with dynamic resolution: a phone that cannot hold ~50 fps gives up pixels, not frames.
 // ---------------------------------------------------------------------------------------------
 const fpsEl = document.getElementById('fps');
-let last = performance.now(), acc = 0, frames = 0, fpsShown = 0;
+let last = performance.now(), acc = 0, frames = 0;
 function resize() { camera.aspect = innerWidth / innerHeight; camera.updateProjectionMatrix(); renderer.setSize(innerWidth, innerHeight); }
 addEventListener('resize', resize);
+const hintEl = document.getElementById('hint');
 
 function frame(now) {
 	const dt = Math.min(0.05, (now - last) / 1000); last = now;
 	U.uTime.value += dt;
 	const t = U.uTime.value;
 
-	// boat round the island, emitting wake rings from its stern
-	BOAT.ang += BOAT.speed / BOAT.r * dt;
-	const bx = Math.cos(BOAT.ang) * BOAT.r, bz = Math.sin(BOAT.ang) * BOAT.r;
-	const [bh, bgx, bgz] = waveAt(bx, bz, t);
-	boat.position.set(bx, bh - 0.12, bz);
-	boat.rotation.set(0, 0, 0);
-	boat.rotation.y = -BOAT.ang;            // nose (+z local) along the tangent
-	boat.rotateX(-bgz * 0.6 * Math.cos(BOAT.ang) + bgx * 0.6 * Math.sin(BOAT.ang));
-	boat.rotateZ(0.06 + (bgx * Math.cos(BOAT.ang) + bgz * Math.sin(BOAT.ang)) * 0.6);
-	BOAT.wakeT += dt;
-	if (BOAT.wakeT > BOAT.wakeEvery) {
-		BOAT.wakeT = 0;
-		const back = 1.6, tx = -Math.sin(BOAT.ang), tz = Math.cos(BOAT.ang);
-		addRipple(bx - tx * back, bz - tz * back, 0.9);
-	}
+	if (P.mode === 'walk') stepWalk(dt); else stepBoat(dt);
+	if (P.mode === 'walk') BOAT.v *= Math.exp(-dt * 0.6);   // a parked boat comes to rest
+	stepBoatWake(dt);
+	IN.jump = false; IN.act = false;
+
+	const [bh, bgx, bgz] = waveAt(BOAT.pos.x, BOAT.pos.z, t);
+	boat.position.set(BOAT.pos.x, bh - 0.12, BOAT.pos.z);
+	const fx = Math.sin(BOAT.h), fz = Math.cos(BOAT.h);
+	boat.rotation.set(0, 0, 0); boat.rotation.y = BOAT.h;
+	boat.rotateX(-(bgx * fx + bgz * fz) * 0.7 - Math.min(0.08, Math.abs(BOAT.v) * 0.012));   // pitch with the slope, bow up under way
+	boat.rotateZ((bgx * fz - bgz * fx) * 0.7);
+	boat.updateMatrixWorld();
 	for (const b of buoys) {
 		const [h, gx, gz] = waveAt(b.position.x, b.position.z, t);
 		b.position.y = h - 0.15; b.rotation.set(gz * 0.9 + Math.sin(t * 1.3 + b.userData.ph) * 0.05, 0, -gx * 0.9);
 	}
 
+	stepHero(dt);
 	stepCam(dt);
+
+	// the contextual button says what it will do
+	const near = P.mode === 'walk' && P.pos.distanceTo(BOAT.pos) < 3.4;
+	const canLeave = P.mode === 'boat' && Math.abs(BOAT.v) < 2.5 && exitPoint();
+	actB.style.display = near || canLeave ? 'block' : 'none';
+	actB.textContent = near ? 'Board' : 'Go ashore';
+	jumpB.style.display = P.mode === 'walk' ? 'block' : 'none';
+
 	renderer.render(scene, camera);
 
 	acc += dt; frames++;
 	if (acc > 2) {
-		const fps = frames / acc; fpsShown = Math.round(fps); acc = 0; frames = 0;
+		const fps = frames / acc; acc = 0; frames = 0;
 		if (fps < 48 && dpr > 1) { dpr = Math.max(1, dpr - 0.25); renderer.setPixelRatio(dpr); resize(); }
 		else if (fps > 58 && dpr < DPR_MAX) { dpr = Math.min(DPR_MAX, dpr + 0.25); renderer.setPixelRatio(dpr); resize(); }
-		fpsEl.textContent = fpsShown + ' fps · ' + dpr.toFixed(2) + 'x';
+		fpsEl.textContent = Math.round(fps) + ' fps · ' + dpr.toFixed(2) + 'x' + (P.mode === 'boat' ? ' · ' + Math.abs(BOAT.v).toFixed(1) + ' m/s' : '');
 	}
 	requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+setTimeout(() => hintEl.classList.add('gone'), 7000);
 
 // ---------------------------------------------------------------------------------------------
 // New build? Pages caches index.html, so the running copy says when the server has moved on.
@@ -839,7 +1140,7 @@ setInterval(async () => {
 	} catch { }
 }, 15000);
 
-window.water = { THREE, scene, camera, renderer, WATER, SEA, TIMES, U, WU, CAM, BOAT, addRipple, setTime, setSea, height };
+window.water = { IN, THREE, scene, camera, renderer, WATER, SEA, TIMES, U, WU, CAM, BOAT, P, MOVE, HERO, addRipple, setTime, setSea, height, heroLook, board, leave };
 </script>
 </body>
 </html>
