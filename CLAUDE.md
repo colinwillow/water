@@ -1,19 +1,26 @@
 # Water — working rules
 
-A copy of [dgreenheck/tidewater](https://github.com/dgreenheck/tidewater) (MIT) used as the base for our
-own scenes, characters and game logic. Keep its `LICENSE` and `CREDITS.md`.
+A from-scratch Three.js r180 island + water scene, built to run well on a phone (WebGL2). One
+`index.html`, native ES modules, `vendor/` three. **No build step.** The Tidewater (WebGPU) import is
+preserved on the `tidewater` branch and is not on `main`.
 
-**Always merge to `main` and push.** The owner hosts it on GitHub Pages and previews on a phone, so a
-change sitting on a branch cannot be tested. Branch while working if you like; end on `main`. No pull
-requests unless asked.
+**Always merge to `main` and push.** The owner hosts it on GitHub Pages and previews on a phone, so a change
+on a branch cannot be tested. No pull requests unless asked. `.github/workflows/deploy.yml` uploads the repo
+root as-is (Settings > Pages > Source = GitHub Actions).
 
-Pages deploys via `.github/workflows/deploy.yml` on every push to `main` (Vite build of `dist/`).
-Settings > Pages > Source must be "GitHub Actions".
+**Run `npm run bump` before every push** (the cyan `wN` badge top-left; a running copy polls
+`version.json` and shows a "build ready · tap" pill). **`npm run check`** is the parse gate. Report
+"shipped unverified" with the build number.
 
-**It is NOT Three.js.** It is his own engine written directly on WebGPU + WGSL (~80k lines in `src/`).
-Nothing from the Three.js games in this account (Shredworld, Plutopia, Melee) drops in unchanged.
+`npm run shot [out.png]` renders the page headless (swiftshader) and prints console and shader-compile
+errors -- worth running after any GLSL change, because a shader that fails to compile is a black screen on
+the phone with nothing to say why. `EVAL="water.setTime('sunset')"` runs code before the shot.
 
-`npm run build` must pass before a push. `node test/game-logic.mjs` runs headless; `test/engine-smoke.mjs`
-needs a real GPU adapter and cannot run in a headless container.
+## Design rules that keep it fast
 
-Heavy features can be switched off by URL for phone testing: `?noClouds&noVeg&noHaze&noCaustics&noSim`.
+- The seabed shader carries the water column's colour; the surface is one transparent draw call. Do not add
+  a refraction/reflection render pass without measuring it on a phone first.
+- No float textures (iOS). All baked textures are RGBA8.
+- Anything opaque that can be underwater must go through `waterPatch()` or it will look dry under water.
+- Sky, fog and water all read the same uniforms (`U`), so the horizon cannot seam.
+- `waveAt()` in JS must stay the same sum as `waveAt()` in GLSL.
